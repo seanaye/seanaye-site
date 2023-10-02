@@ -1,4 +1,7 @@
-use std::mem;
+use std::{
+    mem,
+    ops::{Add, Index, IndexMut},
+};
 
 use wasm_bindgen::prelude::*;
 
@@ -10,75 +13,134 @@ pub enum Cell {
     Alive = 1,
 }
 
+#[derive(Clone)]
 pub struct Universe {
     width: u32,
     height: u32,
     cells: Vec<Cell>,
 }
 
-impl Universe {
-    pub fn get_cell(&self, index: usize) -> Cell {
-        self.cells[index]
+impl Index<usize> for Universe {
+    type Output = Cell;
+    fn index(&self, index: usize) -> &Cell {
+        self.cells.index(index)
     }
+}
 
+impl IndexMut<usize> for Universe {
+    fn index_mut(&mut self, index: usize) -> &mut Cell {
+        self.cells.index_mut(index)
+    }
+}
+
+impl Index<&Coord> for Universe {
+    type Output = Cell;
+    fn index(&self, coord: &Coord) -> &Cell {
+        self.index(self.to_index(coord))
+    }
+}
+
+impl IndexMut<&Coord> for Universe {
+    fn index_mut(&mut self, coord: &Coord) -> &mut Cell {
+        self.index_mut(self.to_index(coord))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Coord {
+    x: i32,
+    y: i32,
+}
+
+impl Add for &Coord {
+    type Output = Coord;
+    fn add(self, other: &Coord) -> Coord {
+        Coord {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        }
+    }
+}
+
+const PERMS: [Coord; 8] = [
+    Coord { x: 0, y: 1 },
+    Coord { x: 1, y: 1 },
+    Coord { x: 1, y: 0 },
+    Coord { x: 1, y: -1 },
+    Coord { x: 0, y: -1 },
+    Coord { x: -1, y: -1 },
+    Coord { x: -1, y: 0 },
+    Coord { x: -1, y: 1 },
+];
+
+impl Universe {
     pub fn length(&self) -> usize {
         self.cells.len()
     }
 
-    pub fn set_cell(&mut self, index: usize, state: Cell) {
-        self.cells[index] = state;
-    }
-
-    fn get_index(&self, row: u32, column: u32) -> usize {
-        (row * self.width + column) as usize
-    }
-
-    fn alive_neighbours(&self, row: u32, column: u32) -> u8 {
-        let mut count = 0;
-        for delta_row in [self.height - 1, 0, 1].iter().cloned() {
-            for delta_col in [self.width - 1, 0, 1].iter().cloned() {
-                if delta_row == 0 && delta_col == 0 {
-                    continue;
-                }
-
-                let neighbour_row = (row + delta_row) % self.height;
-                let neighbour_col = (column + delta_col) % self.width;
-                let idx = self.get_index(neighbour_row, neighbour_col);
-                count += self.cells[idx] as u8
-            }
+    fn to_index(&self, coord: &Coord) -> usize {
+        let mut m = *coord;
+        if m.x < 0i32 {
+            m.x = self.width as i32 - 1;
         }
-        count
+        if m.x >= self.width as i32 {
+            m.x = 0;
+        }
+        if m.y < 0i32 {
+            m.y = self.height as i32 - 1;
+        }
+        if m.y >= self.height as i32 {
+            m.y = 0;
+        }
+        (m.y as u32 * self.width + m.x as u32) as usize
+    }
+
+    fn alive_neighbours(&self, coord: &Coord) -> u8 {
+        PERMS
+            .iter()
+            .filter_map(|p| {
+                let new_coord = coord + p;
+                match self.index(&new_coord) {
+                    Cell::Alive => Some(true),
+                    Cell::Dead => None,
+                }
+            })
+            .count() as u8
     }
 
     pub fn tick(&self) -> Universe {
-        let mut next = self.cells.clone();
+        let mut next = self.clone();
 
         for row in 0..self.height {
             for col in 0..self.width {
-                let idx = self.get_index(row, col);
-                let cell = self.cells[idx];
-                let live_neighbours = self.alive_neighbours(row, col);
-
-                let next_cell = match (cell, live_neighbours) {
-                    (Cell::Alive, x) if x < 2 => Cell::Dead,
-                    (Cell::Alive, 2) | (Cell::Alive, 3) => Cell::Alive,
-                    (Cell::Alive, x) if x > 3 => Cell::Dead,
-                    (Cell::Dead, 3) => Cell::Alive,
-                    (otherwise, _) => otherwise,
+                let coord = Coord {
+                    x: col as i32,
+                    y: row as i32,
                 };
 
-                next[idx] = next_cell
+                let live_neighbours = self.alive_neighbours(&coord);
+
+                let next_cell = match live_neighbours {
+                    x if x < 2 => Some(Cell::Dead),
+                    3 => Some(Cell::Alive),
+                    x if x > 3 => Some(Cell::Dead),
+                    _ => None,
+                };
+
+                if let Some(n) = next_cell {
+                    let c = next.index_mut(&coord);
+                    *c = n;
+                }
             }
         }
-        Universe {
-            width: self.width,
-            height: self.height,
-            cells: next,
-        }
+        next
     }
 
     pub fn new(width: u32, height: u32) -> Universe {
-        let cells = (0..width * height).map(|_| Cell::Dead).collect();
+        let cells = (0..width * height).map(|_| match js_sys::Math::random() > 0.5 {
+            true => Cell::Alive,
+            false => Cell::Dead,
+        }).collect();
 
         Universe {
             width,
@@ -90,19 +152,6 @@ impl Universe {
     pub fn set_size(&mut self, width: u32, height: u32) {
         self.width = width;
         self.height = height;
-    }
-
-    pub fn randomize_cells(&mut self) {
-        for row in 0..self.height {
-            for col in 0..self.width {
-                let new_val = match js_sys::Math::random() {
-                    x if x > 0.5 => Cell::Alive,
-                    _ => Cell::Dead,
-                };
-                let idx = self.get_index(row, col);
-                self.cells[idx] = new_val;
-            }
-        }
     }
 }
 
@@ -124,20 +173,18 @@ pub struct DxUniverse {
 #[wasm_bindgen]
 impl DxUniverse {
     pub fn new(width: u32, height: u32) -> DxUniverse {
-        let mut cur = Universe::new(width, height);
-        cur.randomize_cells();
+        console_error_panic_hook::set_once();
+        let cur = Universe::new(width, height);
         let next = cur.tick();
         let frames_per_tick = 60;
         let cur_frames = 0;
         let dx = (0..width * height)
-            .map(
-                |i| match (cur.get_cell(i as usize), next.get_cell(i as usize)) {
-                    (Cell::Alive, Cell::Alive) => frames_per_tick - 1,
-                    (_, Cell::Alive) => cur_frames % frames_per_tick,
-                    (Cell::Dead, Cell::Dead) => 0,
-                    (_, Cell::Dead) => frames_per_tick - 1 - (cur_frames % frames_per_tick),
-                },
-            )
+            .map(|i| match (cur.index(i as usize), next.index(i as usize)) {
+                (Cell::Alive, Cell::Alive) => frames_per_tick - 1,
+                (_, Cell::Alive) => cur_frames % frames_per_tick,
+                (Cell::Dead, Cell::Dead) => 0,
+                (_, Cell::Dead) => frames_per_tick - 1 - (cur_frames % frames_per_tick),
+            })
             .collect();
 
         DxUniverse {
@@ -156,10 +203,7 @@ impl DxUniverse {
             self.cur_frames = 0
         }
         for i in 0..self.cur.length() {
-            self.dx[i as usize] = match (
-                self.cur.get_cell(i as usize),
-                self.next.get_cell(i as usize),
-            ) {
+            self.dx[i] = match (self.cur.index(i), self.next.index(i)) {
                 (Cell::Alive, Cell::Alive) => self.frames_per_tick - 1,
                 (_, Cell::Alive) => self.cur_frames % self.frames_per_tick,
                 (Cell::Dead, Cell::Dead) => 0,
@@ -176,10 +220,12 @@ impl DxUniverse {
     }
 
     pub fn set_cell(&mut self, row: u32, col: u32, state: Cell) {
-        let idx = self.next.get_index(row, col);
-        if idx < self.next.length() {
-            self.next.set_cell(idx, state);
-        }
+        let coord = Coord {
+            x: col as i32,
+            y: row as i32,
+        };
+        let c = self.next.index_mut(&coord);
+        *c = state;
     }
 
     pub fn set_size(&mut self, width: u32, height: u32) {

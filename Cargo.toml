@@ -1,4 +1,6 @@
 [workspace]
 members = [
   "rs_lib",
+  "parser"
 ]
+resolver = "2"

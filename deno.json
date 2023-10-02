@@ -5,7 +5,9 @@
     "start": "deno run -A --watch=static/,routes/ dev.ts",
     "build": "deno run -A dev.ts build",
     "preview": "deno run -A main.ts",
-    "wasmbuild": "deno run -A https://deno.land/x/wasmbuild@0.15.0/main.ts --out ./static",
+    "wasmbuild:rs_lib": "deno run -A https://deno.land/x/wasmbuild@0.15.0/main.ts --out ./static -p rs_lib",
+    "wasmbuild:parser": "deno run -A https://deno.land/x/wasmbuild@0.15.0/main.ts -p parser",
+    "wasmbuild": "deno task wasmbuild:rs_lib & deno task wasmbuild:parser",
     "update": "deno run -A -r https://fresh.deno.dev/update ."
   },
   "lint": {
